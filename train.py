@@ -108,6 +108,12 @@ parser.add_argument('-gpus', default=[], nargs='+', type=int,
 parser.add_argument('-log_interval', type=int, default=50,
                     help="Print stats at this interval.")
 
+# My
+parser.add_argument('-normalized_output', action="store_true",
+                    help="""""")
+parser.add_argument('-run_rate', type=float, default=0.9,
+                    help="""""")
+
 opt = parser.parse_args()
 
 print(opt)

@@ -86,6 +86,15 @@ class Decoder(nn.Module):
 
         self.hidden_size = opt.rnn_size
 
+        self.normalized_output = opt.normalized_output
+        if opt.normalized_output:
+            self.run_rate = opt.run_rate
+
+            self.register_buffer('hid_mean', torch.zeros(opt.rnn_size))
+            self.hid_mean_ = Variable(-self.hid_mean, requires_grad=False)
+            if len(opt.gpus) >= 1:
+                self.hid_mean_ = self.hid_mean_.cuda()
+
     def load_pretrained_vectors(self, opt):
         if opt.pre_word_vecs_dec is not None:
             pretrained = torch.load(opt.pre_word_vecs_dec)
@@ -108,6 +117,17 @@ class Decoder(nn.Module):
             output, attn = self.attn(output, context.t())
             output = self.dropout(output)
             outputs += [output]
+
+        if self.normalized_output:
+            if self.training:
+                osum = 0.
+                for output in outputs:
+                    osum += output.mean(0)
+                osum /= len(outputs)
+                self.hid_mean_.data = self.run_rate * self.hid_mean_.data + (1.-self.run_rate) * osum.data
+
+            for output in outputs:
+                output.add_(self.hid_mean_.expand_as(output))
 
         outputs = torch.stack(outputs)
         return outputs, hidden, attn
