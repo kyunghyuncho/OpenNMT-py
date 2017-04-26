@@ -94,6 +94,7 @@ class Decoder(nn.Module):
                 self.run_rate = 0.9
             self.register_buffer('hid_mean', torch.zeros(opt.rnn_size))
             self.gpus = opt.gpus
+            self.dropout_rate = opt.dropout
 
     def load_pretrained_vectors(self, opt):
         if opt.pre_word_vecs_dec is not None:
@@ -126,7 +127,11 @@ class Decoder(nn.Module):
                 osum /= len(outputs)
                 self.hid_mean = self.run_rate * self.hid_mean + (1.-self.run_rate) * osum.data
 
-            hid_mean_ = Variable(-self.hid_mean, requires_grad=False)
+            if not self.training:
+                # because dropout multiplies the activation by self.dropout_rate during training
+                hid_mean_ = Variable(-self.hid_mean * (1. - self.dropout_rate), requires_grad=False)
+            else:
+                hid_mean_ = Variable(-self.hid_mean, requires_grad=False)
             if len(self.gpus) >= 1:
                 hid_mean_ = hid_mean_.cuda()
 
