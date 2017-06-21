@@ -41,6 +41,44 @@ class Encoder(nn.Module):
             outputs = unpack(outputs)[0]
         return hidden_t, outputs
 
+class GNN(nn.Module):
+
+    def __init__(self, opt):
+        super(GNN, self).__init__()
+
+        #self.num_directions = 2 if opt.brnn else 1
+        self.hidden_size = opt.rnn_size 
+        self.iter = opt.iter
+
+        self.trans = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+
+    def forward(self, input):
+        # first construct adjacency matrices
+        adjs = []
+        for seq in input.transpose(0,1).split(1):
+            seq = seq[0]
+            # seq: T x self.hidden_size
+            # normalize first
+            seq = seq / torch.sqrt((seq ** 2).sum(1)).expand_as(seq)
+            # A: T x T
+            # get only > 0
+            A = torch.clamp(torch.mm(seq, torch.t(seq)), min=0.)
+            # normalize
+            A = A / A.sum(1).expand_as(A)
+            adjs.append(A)
+        adjs = torch.stack(adjs, 0)
+
+        # apply GCN self.iter-many times
+        hid = input.transpose(0,1)
+        for ii in xrange(self.iter):
+            hid_ = torch.bmm(adjs, hid)
+            hid_ = self.trans(hid_.view(-1,self.hidden_size)).view(input.size(1), input.size(0), -1)
+            hid_ = torch.tanh(hid_)
+            # residual 
+            hid = hid_
+
+        # should put time first
+        return hid.transpose(1,0)
 
 class StackedLSTM(nn.Module):
     def __init__(self, num_layers, input_size, rnn_size, dropout):
@@ -148,10 +186,11 @@ class Decoder(nn.Module):
 
 class NMTModel(nn.Module):
 
-    def __init__(self, encoder, decoder):
+    def __init__(self, encoder, decoder, gnn=None):
         super(NMTModel, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
+        self.gnn = gnn
 
     def make_init_decoder_output(self, context):
         batch_size = context.size(1)
@@ -172,6 +211,10 @@ class NMTModel(nn.Module):
         src = input[0]
         tgt = input[1][:-1]  # exclude last target from inputs
         enc_hidden, context = self.encoder(src)
+
+        if self.gnn is not None:
+            context = self.gnn(context)
+
         init_output = self.make_init_decoder_output(context)
 
         enc_hidden = (self._fix_enc_hidden(enc_hidden[0]),
@@ -181,3 +224,7 @@ class NMTModel(nn.Module):
                                               context, init_output)
 
         return out
+
+
+
+

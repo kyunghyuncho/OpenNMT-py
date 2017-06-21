@@ -118,6 +118,10 @@ parser.add_argument('-normalized_output', action="store_true",
                     help="""""")
 parser.add_argument('-run_rate', type=float, default=0.9,
                     help="""""")
+parser.add_argument('-gnn', action="store_true",
+                    help="""""")
+parser.add_argument('-iter', type=int, default=4,
+                    help="""""")
 
 opt = parser.parse_args()
 
@@ -325,13 +329,18 @@ def main():
     else:
         print("Unsupported encoder type %s" % (opt.encoder_type))
 
+    if opt.gnn:
+        gnn = onmt.Models.GNN(opt)
+    else:
+        gnn = None
+
     decoder = onmt.Models.Decoder(opt, dicts['tgt'])
 
     generator = nn.Sequential(
         nn.Linear(opt.rnn_size, dicts['tgt'].size()),
         nn.LogSoftmax())
 
-    model = onmt.Models.NMTModel(encoder, decoder)
+    model = onmt.Models.NMTModel(encoder, decoder, gnn)
 
     if opt.train_from:
         print('Loading model from checkpoint at %s' % opt.train_from)
