@@ -1,15 +1,28 @@
 import onmt
-
+import onmt.Markdown
 import argparse
 import torch
 
-parser = argparse.ArgumentParser(description='preprocess.py')
 
-##
-## **Preprocess Options**
-##
+def loadImageLibs():
+    "Conditional import of torch image libs."
+    global Image, transforms
+    from PIL import Image
+    from torchvision import transforms
+
+
+parser = argparse.ArgumentParser(description='preprocess.py')
+onmt.Markdown.add_md_help_argument(parser)
+
+# **Preprocess Options**
 
 parser.add_argument('-config',    help="Read options from this file")
+
+parser.add_argument('-src_type', default="text",
+                    help="Type of the source input. Options are [text|img].")
+parser.add_argument('-src_img_dir', default=".",
+                    help="Location of source images")
+
 
 parser.add_argument('-train_src', required=True,
                     help="Path to the training source data")
@@ -18,7 +31,7 @@ parser.add_argument('-train_tgt', required=True,
 parser.add_argument('-valid_src', required=True,
                     help="Path to the validation source data")
 parser.add_argument('-valid_tgt', required=True,
-                     help="Path to the validation target data")
+                    help="Path to the validation target data")
 
 parser.add_argument('-save_data', required=True,
                     help="Output file for the prepared data")
@@ -32,9 +45,15 @@ parser.add_argument('-src_vocab',
 parser.add_argument('-tgt_vocab',
                     help="Path to an existing target vocabulary")
 
+parser.add_argument('-src_seq_length', type=int, default=50,
+                    help="Maximum source sequence length")
+parser.add_argument('-src_seq_length_trunc', type=int, default=0,
+                    help="Truncate source sequence length.")
+parser.add_argument('-tgt_seq_length', type=int, default=50,
+                    help="Maximum target sequence length to keep.")
+parser.add_argument('-tgt_seq_length_trunc', type=int, default=0,
+                    help="Truncate target sequence length.")
 
-parser.add_argument('-seq_length', type=int, default=50,
-                    help="Maximum sequence length")
 parser.add_argument('-shuffle',    type=int, default=1,
                     help="Shuffle data")
 parser.add_argument('-seed',       type=int, default=3435,
@@ -49,9 +68,11 @@ opt = parser.parse_args()
 
 torch.manual_seed(opt.seed)
 
+
 def makeVocabulary(filename, size):
     vocab = onmt.Dict([onmt.Constants.PAD_WORD, onmt.Constants.UNK_WORD,
-                       onmt.Constants.BOS_WORD, onmt.Constants.EOS_WORD], lower=opt.lower)
+                       onmt.Constants.BOS_WORD, onmt.Constants.EOS_WORD],
+                      lower=opt.lower)
 
     with open(filename) as f:
         for sent in f.readlines():
@@ -111,7 +132,7 @@ def makeData(srcFile, tgtFile, srcDicts, tgtDicts):
 
         # source or target does not have same number of lines
         if sline == "" or tline == "":
-            print('WARNING: source and target do not have the same number of sentences')
+            print('WARNING: src and tgt do not have the same # of sentences')
             break
 
         sline = sline.strip()
@@ -125,15 +146,27 @@ def makeData(srcFile, tgtFile, srcDicts, tgtDicts):
         srcWords = sline.split()
         tgtWords = tline.split()
 
-        if len(srcWords) <= opt.seq_length and len(tgtWords) <= opt.seq_length:
+        if len(srcWords) <= opt.src_seq_length \
+           and len(tgtWords) <= opt.tgt_seq_length:
 
-            src += [srcDicts.convertToIdx(srcWords,
-                                          onmt.Constants.UNK_WORD)]
+            # Check truncation condition.
+            if opt.src_seq_length_trunc != 0:
+                srcWords = srcWords[:opt.src_seq_length_trunc]
+            if opt.tgt_seq_length_trunc != 0:
+                tgtWords = tgtWords[:opt.tgt_seq_length_trunc]
+
+            if opt.src_type == "text":
+                src += [srcDicts.convertToIdx(srcWords,
+                                              onmt.Constants.UNK_WORD)]
+            elif opt.src_type == "img":
+                loadImageLibs()
+                src += [transforms.ToTensor()(
+                    Image.open(opt.src_img_dir + "/" + srcWords[0]))]
+
             tgt += [tgtDicts.convertToIdx(tgtWords,
                                           onmt.Constants.UNK_WORD,
                                           onmt.Constants.BOS_WORD,
                                           onmt.Constants.EOS_WORD)]
-
             sizes += [len(srcWords)]
         else:
             ignored += 1
@@ -158,8 +191,9 @@ def makeData(srcFile, tgtFile, srcDicts, tgtDicts):
     src = [src[idx] for idx in perm]
     tgt = [tgt[idx] for idx in perm]
 
-    print('Prepared %d sentences (%d ignored due to length == 0 or > %d)' %
-          (len(src), ignored, opt.seq_length))
+    print(('Prepared %d sentences ' +
+          '(%d ignored due to length == 0 or src len > %d or tgt len > %d)') %
+          (len(src), ignored, opt.src_seq_length, opt.tgt_seq_length))
 
     return src, tgt
 
@@ -167,8 +201,11 @@ def makeData(srcFile, tgtFile, srcDicts, tgtDicts):
 def main():
 
     dicts = {}
-    dicts['src'] = initVocabulary('source', opt.train_src, opt.src_vocab,
-                                  opt.src_vocab_size)
+    dicts['src'] = onmt.Dict()
+    if opt.src_type == "text":
+        dicts['src'] = initVocabulary('source', opt.train_src, opt.src_vocab,
+                                      opt.src_vocab_size)
+
     dicts['tgt'] = initVocabulary('target', opt.train_tgt, opt.tgt_vocab,
                                   opt.tgt_vocab_size)
 
@@ -180,16 +217,16 @@ def main():
     print('Preparing validation ...')
     valid = {}
     valid['src'], valid['tgt'] = makeData(opt.valid_src, opt.valid_tgt,
-                                    dicts['src'], dicts['tgt'])
+                                          dicts['src'], dicts['tgt'])
 
     if opt.src_vocab is None:
         saveVocabulary('source', dicts['src'], opt.save_data + '.src.dict')
     if opt.tgt_vocab is None:
         saveVocabulary('target', dicts['tgt'], opt.save_data + '.tgt.dict')
 
-
     print('Saving data to \'' + opt.save_data + '.train.pt\'...')
     save_data = {'dicts': dicts,
+                 'type':  opt.src_type,
                  'train': train,
                  'valid': valid}
     torch.save(save_data, opt.save_data + '.train.pt')
