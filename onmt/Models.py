@@ -5,6 +5,8 @@ import onmt.modules
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 from torch.nn.utils.rnn import pack_padded_sequence as pack
 
+import numpy
+
 
 class Encoder(nn.Module):
 
@@ -51,31 +53,29 @@ class GNN(nn.Module):
         self.iter = opt.iter
 
         self.trans = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+        self.sigm = nn.Sigmoid()
 
     def forward(self, input):
         # first construct adjacency matrices
         adjs = []
         for seq in input.transpose(0,1).split(1):
             seq = seq[0]
-            # seq: T x self.hidden_size
-            # normalize first
-            seq = seq / torch.sqrt((seq ** 2).sum(1)).expand_as(seq)
-            # A: T x T
-            # get only > 0
-            A = torch.clamp(torch.mm(seq, torch.t(seq)), min=0.)
-            # normalize
-            A = A / A.sum(1).expand_as(A)
+
+            scores = torch.mm(seq, seq.transpose(0, 1))
+            A = self.sigm(scores)
+            ## normalize
+            A = A / A.sum(1).expand_as(A).clamp(min=1e-6)
             adjs.append(A)
-        adjs = torch.stack(adjs, 0)
+        adjs = torch.stack(adjs, 0).clone().detach()
 
         # apply GCN self.iter-many times
         hid = input.transpose(0,1)
-        for ii in xrange(self.iter):
+        for ii in xrange(numpy.minimum(self.iter,input.size(0))):
             hid_ = torch.bmm(adjs, hid)
             hid_ = self.trans(hid_.view(-1,self.hidden_size)).view(input.size(1), input.size(0), -1)
             hid_ = torch.tanh(hid_)
             # residual 
-            hid = hid_
+            hid = hid_ + hid
 
         # should put time first
         return hid.transpose(1,0)
