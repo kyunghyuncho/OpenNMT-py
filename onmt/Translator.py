@@ -33,7 +33,13 @@ class Translator(object):
             encoder = onmt.modules.ImageEncoder(model_opt)
 
         decoder = onmt.Models.Decoder(model_opt, self.tgt_dict)
-        model = onmt.Models.NMTModel(encoder, decoder)
+
+        if model_opt.gnn:
+            gnn = onmt.Models.GNN(model_opt)
+        else:
+            gnn = None
+
+        model = onmt.Models.NMTModel(encoder, decoder, gnn)
 
         generator = nn.Sequential(
             nn.Linear(model_opt.rnn_size, self.tgt_dict.size()),
@@ -106,6 +112,9 @@ class Translator(object):
 
         #  (1) run the encoder on the src
         encStates, context = self.model.encoder(srcBatch)
+
+        if self.model.gnn is not None:
+            context = self.model.gnn(context)
 
         # Drop the lengths needed for encoder.
         srcBatch = srcBatch[0]

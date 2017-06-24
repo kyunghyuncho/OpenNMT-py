@@ -58,18 +58,25 @@ class GNN(nn.Module):
 
     def forward(self, input):
         # first construct adjacency matrices
-        adjs = []
-        for seq in input.transpose(0,1).split(1):
-            seq = seq[0]
-            seq_ = self.trans2(seq)
+        seqs = input.transpose(0, 1)
+        scores = torch.bmm(seqs, seqs.transpose(1,2))
+        A = scores.clamp(min=0.)
+        ## normalize
+        A = A / A.sum(2).expand_as(A).clamp(min=1e-6)
+        adjs = A
 
-            scores = torch.mm(seq_, seq_.transpose(0, 1))
-            #A = self.sigm(scores)
-            A = scores.clamp(min=0.)
-            ## normalize
-            A = A / A.sum(1).expand_as(A).clamp(min=1e-6)
-            adjs.append(A)
-        adjs = torch.stack(adjs, 0) #.clone().detach()
+        #adjs = []
+        #for seq in input.transpose(0,1).split(1):
+        #    seq = seq[0]
+        #    seq_ = self.trans2(seq)
+
+        #    scores = torch.mm(seq_, seq_.transpose(0, 1))
+        #    #A = self.sigm(scores)
+        #    A = scores.clamp(min=0.)
+        #    ## normalize
+        #    A = A / A.sum(1).expand_as(A).clamp(min=1e-6)
+        #    adjs.append(A)
+        #adjs = torch.stack(adjs, 0) #.clone().detach()
 
         # apply GCN self.iter-many times
         hid = input.transpose(0,1)
