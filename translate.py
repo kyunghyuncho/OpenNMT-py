@@ -6,6 +6,9 @@ import torch
 import argparse
 import math
 
+import numpy
+
+
 parser = argparse.ArgumentParser(description='translate.py')
 onmt.Markdown.add_md_help_argument(parser)
 
@@ -26,6 +29,8 @@ parser.add_argument('-batch_size', type=int, default=30,
                     help='Batch size')
 parser.add_argument('-max_sent_length', type=int, default=100,
                     help='Maximum sentence length.')
+parser.add_argument('-normalize', action="store_true",
+                    help="""Length-normalize the score""")
 parser.add_argument('-replace_unk', action="store_true",
                     help="""Replace the generated UNK tokens with the source
                     token that had highest attention weight. If phrase_table
@@ -100,6 +105,18 @@ def main():
 
         predBatch, predScore, goldScore = translator.translate(srcBatch,
                                                                tgtBatch)
+
+        if opt.normalize:
+            predBatch_ = []
+            predScore_ = []
+            for bb, ss in zip(predBatch, predScore):
+                ss_ = [s_/numpy.maximum(1., len(b_)) for b_,s_ in zip(bb,ss)]
+                sidx = numpy.argsort(ss_)[::-1]
+                predBatch_.append([bb[s] for s in sidx])
+                predScore_.append([ss_[s] for s in sidx])
+            predBatch = predBatch_
+            predScore = predScore_
+
         predScoreTotal += sum(score[0] for score in predScore)
         predWordsTotal += sum(len(x[0]) for x in predBatch)
         if tgtF is not None:

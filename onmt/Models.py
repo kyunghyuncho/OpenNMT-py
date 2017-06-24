@@ -56,14 +56,20 @@ class GNN(nn.Module):
         self.trans2 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
         self.sigm = nn.Sigmoid()
 
-    def forward(self, input):
+    def forward(self, input, mask=None):
         # first construct adjacency matrices
         seqs = input.transpose(0, 1)
+        seqs = self.trans2(seqs.contiguous().view(-1, self.hidden_size))
+        seqs = seqs.view(input.size(1),input.size(0),input.size(2))
+        seqs = torch.tanh(seqs)
         scores = torch.bmm(seqs, seqs.transpose(1,2))
         A = scores.clamp(min=0.)
         ## normalize
         A = A / A.sum(2).expand_as(A).clamp(min=1e-6)
         adjs = A
+
+        if mask is not None:
+            mask = Variable(mask)
 
         #adjs = []
         #for seq in input.transpose(0,1).split(1):
@@ -85,6 +91,8 @@ class GNN(nn.Module):
             hid_ = self.trans(hid_.view(-1,self.hidden_size)).view(input.size(1), input.size(0), -1)
             #hid_ = torch.tanh(hid_)
             hid_ = hid_.clamp(min=0.)
+            if mask is not None:
+                hid_.masked_fill(mask.unsqueeze(2).expand_as(hid_), 0.)
             # residual 
             hid = hid_ + hid
             #hid = hid_
@@ -225,7 +233,7 @@ class NMTModel(nn.Module):
         enc_hidden, context = self.encoder(src)
 
         if self.gnn is not None:
-            context = self.gnn(context)
+            context = self.gnn(context, mask=None)
 
         init_output = self.make_init_decoder_output(context)
 

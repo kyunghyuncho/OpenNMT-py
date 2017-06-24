@@ -113,12 +113,19 @@ class Translator(object):
         #  (1) run the encoder on the src
         encStates, context = self.model.encoder(srcBatch)
 
-        if self.model.gnn is not None:
-            context = self.model.gnn(context)
-
         # Drop the lengths needed for encoder.
         srcBatch = srcBatch[0]
         batchSize = self._getBatchSize(srcBatch)
+
+        #  This mask is applied to the attention model inside the decoder
+        #  so that the attention ignores source padding
+        useMasking = self._type == "text"
+        padMask = None
+        if useMasking:
+            padMask = srcBatch.data.eq(onmt.Constants.PAD).t()
+
+        if self.model.gnn is not None:
+            context = self.model.gnn(context, mask=padMask)
 
         rnnSize = context.size(2)
         encStates = (self.model._fix_enc_hidden(encStates[0]),
@@ -126,13 +133,6 @@ class Translator(object):
 
         decoder = self.model.decoder
         attentionLayer = decoder.attn
-        useMasking = self._type == "text"
-
-        #  This mask is applied to the attention model inside the decoder
-        #  so that the attention ignores source padding
-        padMask = None
-        if useMasking:
-            padMask = srcBatch.data.eq(onmt.Constants.PAD).t()
 
         def mask(padMask):
             if useMasking:
@@ -237,7 +237,11 @@ class Translator(object):
 
         #  (4) package everything up
         allHyp, allScores, allAttn = [], [], []
-        n_best = self.opt.n_best
+        if self.opt.normalize:
+            N = self.opt.beam_size
+        else:
+            N = self.opt.n_best
+        n_best = N
 
         for b in range(batchSize):
             scores, ks = beam[b].sortBest()
@@ -278,11 +282,16 @@ class Translator(object):
                     key=lambda x: x[-1])))[:-1]
 
         #  (3) convert indexes to words
+        if self.opt.normalize:
+            N = self.opt.beam_size
+        else:
+            N = self.opt.n_best
+
         predBatch = []
         for b in range(batchSize):
             predBatch.append(
                 [self.buildTargetTokens(pred[b][n], srcBatch[b], attn[b][n])
-                 for n in range(self.opt.n_best)]
+                 for n in range(N)]
             )
 
         return predBatch, predScore, goldScore
