@@ -63,9 +63,9 @@ class GNN(nn.Module):
         seqs = seqs.view(input.size(1),input.size(0),input.size(2))
         seqs = torch.tanh(seqs)
         scores = torch.bmm(seqs, seqs.transpose(1,2))
-        A = scores.clamp(min=0.)
-        ## normalize
-        A = A / A.sum(2).expand_as(A).clamp(min=1e-6)
+        scores = scores - scores.max(2)[0].expand_as(scores)
+        A = torch.exp(scores)
+        A = A / A.sum(2).expand_as(A)
         adjs = A
 
         if mask is not None:
