@@ -52,16 +52,23 @@ class GNN(nn.Module):
         self.hidden_size = opt.rnn_size 
         self.iter = opt.iter
 
-        self.trans = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
-        self.trans2 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+        # for adjacency
+        self.trans_a1 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+        self.trans_a2 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+        # for message passing
+        self.trans_m = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+        # for adaptive damping
+        self.trans_g = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+
         self.sigm = nn.Sigmoid()
 
     def forward(self, input, mask=None):
         # first construct adjacency matrices
         seqs = input.transpose(0, 1)
-        seqs = self.trans2(seqs.contiguous().view(-1, self.hidden_size))
-        seqs = seqs.view(input.size(1),input.size(0),input.size(2))
+        seqs = self.trans_a1(seqs.contiguous().view(-1, self.hidden_size))
         seqs = torch.tanh(seqs)
+        seqs = self.trans_a2(seqs)
+        seqs = seqs.view(input.size(1),input.size(0),input.size(2))
         scores = torch.bmm(seqs, seqs.transpose(1,2))
         scores = scores - scores.max(2)[0].expand_as(scores)
         A = torch.exp(scores)
@@ -71,31 +78,19 @@ class GNN(nn.Module):
         if mask is not None:
             mask = Variable(mask)
 
-        #adjs = []
-        #for seq in input.transpose(0,1).split(1):
-        #    seq = seq[0]
-        #    seq_ = self.trans2(seq)
-
-        #    scores = torch.mm(seq_, seq_.transpose(0, 1))
-        #    #A = self.sigm(scores)
-        #    A = scores.clamp(min=0.)
-        #    ## normalize
-        #    A = A / A.sum(1).expand_as(A).clamp(min=1e-6)
-        #    adjs.append(A)
-        #adjs = torch.stack(adjs, 0) #.clone().detach()
-
         # apply GCN self.iter-many times
         hid = input.transpose(0,1)
         for ii in xrange(numpy.minimum(self.iter,input.size(0))):
-            hid_ = torch.bmm(adjs, hid)
-            hid_ = self.trans(hid_.view(-1,self.hidden_size)).view(input.size(1), input.size(0), -1)
-            #hid_ = torch.tanh(hid_)
-            hid_ = hid_.clamp(min=0.)
+            hid0 = torch.bmm(adjs, hid)
+            hid_ = self.trans_m(hid0.view(-1,self.hidden_size)).view(input.size(1), input.size(0), -1)
+            hid_ = torch.tanh(hid_)
+            gate_ = self.trans_g(hid0.view(-1,self.hidden_size)).view(input.size(1), input.size(0), -1)
+            gate_ = self.sigm(gate_)
+            #hid_ = hid_.clamp(min=0.)
             if mask is not None:
                 hid_.masked_fill(mask.unsqueeze(2).expand_as(hid_), 0.)
             # residual 
-            hid = hid_ + hid
-            #hid = hid_
+            hid = gate_ * hid_ + (1. - gate_) * hid
 
         # should put time first
         return hid.transpose(1,0)
