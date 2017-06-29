@@ -54,7 +54,7 @@ class GNN(nn.Module):
 
         # for adjacency
         self.trans_a1 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
-        self.trans_a2 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+        self.trans_a2 = nn.Linear(self.hidden_size, 1, bias=True)
         # for message passing
         self.trans_m = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
         # for adaptive damping
@@ -62,21 +62,38 @@ class GNN(nn.Module):
 
         self.sigm = nn.Sigmoid()
 
-    def forward(self, input, mask=None):
+    def adj(self, input, mask=None):
         # first construct adjacency matrices
         seqs = input.transpose(0, 1)
-        seqs = self.trans_a1(seqs.contiguous().view(-1, self.hidden_size))
-        seqs = torch.tanh(seqs)
-        seqs = self.trans_a2(seqs)
-        seqs = seqs.view(input.size(1),input.size(0),input.size(2))
-        scores = torch.bmm(seqs, seqs.transpose(1,2))
+        seqsA = self.trans_a1(seqs.contiguous().view(-1, self.hidden_size))
+        seqsB = self.trans_a1(seqs.contiguous().view(-1, self.hidden_size))
+        seqsA = seqsA.view(input.size(1), input.size(0), self.hidden_size)
+        seqsB = seqsB.view(input.size(1), input.size(0), self.hidden_size)
+        seqsA = seqsA.unsqueeze(1).expand(seqsA.size(0), seqsA.size(1), seqsA.size(1), self.hidden_size)
+        seqsB = seqsB.unsqueeze(2).expand(seqsB.size(0), seqsB.size(1), seqsB.size(1), self.hidden_size)
+        seqs = torch.tanh(seqsA + seqsB).view(seqsA.size(0) * (seqsA.size(1) ** 2), -1)
+        scores = self.trans_a2(seqs)
+        scores = scores.view(input.size(1),input.size(0),input.size(0))
+
+        scores.masked_fill_(mask.unsqueeze(2).expand_as(scores), -1e+8)
         scores = scores - scores.max(2)[0].expand_as(scores)
         A = torch.exp(scores)
-        A = A / A.sum(2).expand_as(A)
-        adjs = A
 
         if mask is not None:
+            Z = (A * (1-mask).float().unsqueeze(2).expand_as(A)).sum(2)
+            Z.masked_fill_(mask.unsqueeze(2), 1.)
+            A = A / Z.expand_as(A)
+            A.masked_fill_(mask.unsqueeze(2).expand_as(A), 0.)
+        else:
+            A = A / A.sum(2).expand_as(A)
+
+        return A
+
+    def forward(self, input, mask=None):
+        if mask is not None:
             mask = Variable(mask)
+
+        adjs = self.adj(input, mask)
 
         # apply GCN self.iter-many times
         hid = input.transpose(0,1)
@@ -88,7 +105,7 @@ class GNN(nn.Module):
             gate_ = self.sigm(gate_)
             #hid_ = hid_.clamp(min=0.)
             if mask is not None:
-                hid_.masked_fill(mask.unsqueeze(2).expand_as(hid_), 0.)
+                hid_.masked_fill_(mask.unsqueeze(2).expand_as(hid_), 0.)
             # residual 
             hid = gate_ * hid_ + (1. - gate_) * hid
 
